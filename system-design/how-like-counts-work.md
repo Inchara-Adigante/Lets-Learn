@@ -4,6 +4,26 @@ A viral video can collect thousands of likes **every second**. When you tap 👍
 
 > YouTube, Instagram and X don't publish their exact internals. This is the **standard design** used for counters at this scale (and the way system-design interviews expect you to explain it). The building blocks are real and widely used.
 
+## ▶️ Watch the simulation
+
+![Simulation: thousands of likes a second on one video](likes-simulation/likes-simulation.gif)
+
+- 🎬 **Full video (MP4, 86 s):** [likes-simulation.mp4](likes-simulation/likes-simulation.mp4)
+- 🕹️ **Interactive version:** download [`likes-simulation/index.html`](likes-simulation/index.html) and open it in a browser. Drag *Likes per second* from 100 to 50,000, switch between the two designs, change the batch window and the number of counter shards, or press **Play guided tour**.
+
+What the simulation shows, in 8 steps:
+
+| Step | Likes/s | What you see |
+|---|---:|---|
+| 1 | 200 | Naive design: one row holds the count. Every like runs `like_count = like_count + 1`. Works fine. |
+| 2 | 10,000 | The video goes viral. The row can take about 1,000 locked updates a second. It turns red: **hot key**. |
+| 3 | 10,000 | Likes queue for the lock, wait 2 s, then time out. **About 90% of likes fail.** More API servers don't help. |
+| 4 | 10,000 | Fix 1: each like is its own record, sharded by `user_id`. 8 machines at ~1,250 writes/s each. **No hot key.** |
+| 5 | 10,000 | Fix 2: each like also becomes an event in a log. A stream job adds them up and writes **+N once a second**: 10,000 likes → 4 writes. |
+| 6 | 10,000 | Fix 3: the counter is split into 16 shards. Each +N goes to a random shard: **0.25 writes/s per shard**. |
+| 7 | 10,000 | Viewers read a cache refreshed every 2 s and see **1.2M**. It lags the true count by ~2 s. |
+| 8 | 50,000 | Even at 50,000/s, every machine stays under its limit and **no like is lost**. |
+
 ---
 
 ## 1. The key insight: it's really two different problems

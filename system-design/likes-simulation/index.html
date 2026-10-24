@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Million Likes Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one operations console. Controls on top, the live system diagram as the stage, readouts and a caption strip under it, reference table last. */
+:root {
+  --bg: #f3f5f8;
+  --panel: #ffffff;
+  --ink: #141a24;
+  --muted: #5b6577;
+  --line: #d9dee7;
+  --accent: #4b55d6;      /* likes in flight */
+  --event: #0f9488;       /* events in the log */
+  --flush: #c27c0e;       /* batched +N writes */
+  --hot: #d63c3c;         /* hot key, failures */
+  --ok: #2f9e5b;
+  --stage: #fbfcfd;
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1218; --panel: #161c25; --ink: #e6eaf2; --muted: #98a2b5; --line: #2a3340;
+    --accent: #8a93ff; --event: #2dd4bf; --flush: #f2b544; --hot: #ff6b6b; --ok: #4ade80; --stage: #121821;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1218; --panel: #161c25; --ink: #e6eaf2; --muted: #98a2b5; --line: #2a3340;
+  --accent: #8a93ff; --event: #2dd4bf; --flush: #f2b544; --hot: #ff6b6b; --ok: #4ade80; --stage: #121821;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(26px, 4vw, 40px); line-height: 1.05; margin: 0; text-wrap: balance; }
+.lede { margin: 0; color: var(--muted); max-width: 68ch; }
+
+.bar { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.tabs { display: flex; gap: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 3px; }
+.tabs button { border: 0; background: transparent; color: var(--muted); font: 500 14px var(--font-body); padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.tabs button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.ctl { display: grid; gap: 2px; min-width: 0; }
+.ctl label { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
+.ctl output { font-family: var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.ctl input[type=range] { width: 190px; max-width: 100%; accent-color: var(--accent); }
+.btns { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.btn { font: 600 14px var(--font-body); border-radius: 8px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:focus-visible, .tabs button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ctl.k-only[hidden] { display: none; }
+
+.stage { background: var(--stage); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
+canvas { display: block; width: 100%; min-width: 760px; height: auto; aspect-ratio: 1200 / 560; }
+
+.caption { display: flex; gap: 12px; align-items: flex-start; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-height: 64px; }
+.caption .step { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; padding-top: 3px; }
+.caption p { margin: 0; font-size: 16px; max-width: 90ch; min-width: 0; }
+.caption b { color: var(--ink); }
+.caption code, .lede code { font-family: var(--font-mono); font-size: 14px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font-family: var(--font-mono); font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .s { font-size: 12px; color: var(--muted); }
+.v.bad { color: var(--hot); } .v.good { color: var(--ok); }
+
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 22px; margin: 12px 0 0; }
+.tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+tr:last-child td { border-bottom: 0; }
+td code { font-family: var(--font-mono); font-size: 13px; }
+.note { color: var(--muted); font-size: 13px; margin: 0; max-width: 90ch; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">System design · live simulation</div>
+    <h1>One video, thousands of likes a second</h1>
+    <p class="lede">Watch where every like goes, why a single counter row melts down (the hot key problem), and how real platforms store and update the count. Press <b>Play guided tour</b>, or drag the sliders yourself.</p>
+  </header>
+
+  <div class="bar" role="group" aria-label="Simulation controls">
+    <div class="tabs" role="group" aria-label="Design">
+      <button id="m1" aria-pressed="true">1 · Naive: one row</button>
+      <button id="m2" aria-pressed="false">2 · How it's really done</button>
+    </div>
+    <div class="ctl">
+      <label for="rate">Likes per second <output id="rateOut">200</output></label>
+      <input id="rate" type="range" min="0" max="1000" value="0">
+    </div>
+    <div class="ctl k-only" id="wCtl" hidden>
+      <label for="win">Batch window <output id="winOut">1.0 s</output></label>
+      <input id="win" type="range" min="1" max="10" value="2">
+    </div>
+    <div class="ctl k-only" id="kCtl" hidden>
+      <label for="shards">Counter shards <output id="shardsOut">16</output></label>
+      <input id="shards" type="range" min="0" max="6" value="4">
+    </div>
+    <div class="btns">
+      <button class="btn" id="pause">Pause</button>
+      <button class="btn primary" id="tour">Play guided tour</button>
+    </div>
+  </div>
+
+  <div class="stage"><canvas id="cv" width="1200" height="560" aria-label="Animated diagram of likes flowing through the system"></canvas></div>
+
+  <div class="caption" aria-live="polite"><span class="step" id="capStep">LIVE</span><p id="cap"></p></div>
+
+  <div class="stats" id="stats"></div>
+
+  <h2>Where each piece is stored</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Piece</th><th>What it holds</th><th>Key / how it's split</th><th>Typical technology</th><th>Must be exact?</th></tr></thead>
+      <tbody>
+        <tr><td>Like records</td><td>One row per person per video: <code>(user_id, video_id) → LIKED, time</code></td><td>Sharded by <code>user_id</code>, so a viral video's likes spread over every machine</td><td>Bigtable, Cassandra, Spanner, sharded MySQL</td><td>Yes. Source of truth; powers your blue button</td></tr>
+        <tr><td>Event log</td><td>Every change as an event: <code>LIKED</code> / <code>UNLIKED</code></td><td>Partitioned by <code>(user_id, video_id)</code> so one person's like/unlike stay in order</td><td>Kafka, Pub/Sub, Kinesis</td><td>Kept for replay</td></tr>
+        <tr><td>Aggregator</td><td>A running <code>+N</code> per video for the current window (in memory)</td><td>One worker per log partition</td><td>Flink, Spark Structured Streaming, Dataflow</td><td>Checkpointed, so a crash doesn't double count</td></tr>
+        <tr><td>Counter</td><td>The total, split into sub-counters: <code>like_count:abc:0 … :15</code></td><td>Each <code>+N</code> goes to a random shard; reads add them up</td><td>Redis, Bigtable, a counters table</td><td>No. Seconds behind is fine</td></tr>
+        <tr><td>Cache</td><td>The summed total for each video, refreshed every few seconds</td><td>Replicated close to viewers</td><td>Memcached, Redis, edge caches</td><td>No. Shown rounded, like 1.2M</td></tr>
+        <tr><td>Nightly recount</td><td><code>COUNT(*)</code> of like records per video</td><td>Batch job over the source of truth</td><td>Spark, BigQuery, MapReduce</td><td>Fixes any drift in the counter</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Capacities in the simulation are round, realistic figures: one locked row takes about 1,000 updates a second; one storage machine takes about 10,000 writes a second. YouTube doesn't publish its internals; this is the standard design for counters at this scale.</p>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const W = 1200, H = 560;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- model constants ----------
+  const ROW_CAP = 1000;          // updates/s one locked row can take
+  const TIMEOUT = 2;             // s a request waits before giving up
+  const SHARD_CAP = 10000;       // writes/s per like-record machine
+  const N_REC = 8;               // like-record shards drawn
+  const N_AGG = 4;               // aggregator workers (one write each per window)
+  const CACHE_EVERY = 2;         // s between cache refreshes
+  const BASE = 1183402;          // likes the video already has
+  const SHARD_STEPS = [1, 2, 4, 8, 16, 32, 64];
+
+  // ---------- colors from CSS tokens ----------
+  let C = {};
+  const readColors = () => {
+    const s = getComputedStyle(document.documentElement);
+    for (const k of ['bg','panel','ink','muted','line','accent','event','flush','hot','ok','stage']) C[k] = s.getPropertyValue('--' + k).trim();
+  };
+  readColors();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors);
+  new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  // ---------- state ----------
+  const S = {
+    mode: 1, R: 200, Rcur: 200, paused: false, win: 1, K: 16, hl: [],
+    t: 0,
+  };
+  const reset = () => {
+    S.trueCount = BASE; S.attempted = 0;
+    S.m1 = { Q: 0, db: BASE, failed: 0, failRate: 0, servedRate: 0 };
+    const per = Math.floor(BASE / S.K);
+    S.m2 = { agg: 0, aggT: 0, last: 0, shards: Array.from({ length: S.K }, (_, i) => per + (i === 0 ? BASE - per * S.K : 0)),
+             cache: BASE, cacheT: 0, flashes: Array(S.K).fill(0), recLoad: Array(N_REC).fill(0), cachePulse: 0 };
+    parts.length = 0;
+  };
+  const parts = [];
+
+  // ---------- helpers ----------
+  const fmt = n => Math.round(n).toLocaleString('en-US');
+  const short = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(Math.round(n));
+  const rateFromSlider = v => Math.round(Math.pow(10, 2 + (v / 1000) * Math.log10(500)) / 10) * 10;   // 100 .. 50,000 (log)
+  const sliderFromRate = r => Math.round(1000 * (Math.log10(r) - 2) / Math.log10(500));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+  function box(x, y, w, h, title, sub, opts = {}) {
+    rr(x, y, w, h, 8);
+    ctx.fillStyle = opts.fill || C.panel; ctx.fill();
+    ctx.lineWidth = opts.lw || 1.5; ctx.strokeStyle = opts.stroke || C.line; ctx.stroke();
+    ctx.fillStyle = opts.ink || C.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `600 ${opts.fs || 13}px "IBM Plex Sans", sans-serif`;
+    ctx.fillText(title, x + w / 2, y + (sub ? h / 2 - 8 : h / 2));
+    if (sub) { ctx.font = `400 11px "IBM Plex Mono", monospace`; ctx.fillStyle = C.muted; ctx.fillText(sub, x + w / 2, y + h / 2 + 9); }
+  }
+  function label(t, x, y, o = {}) {
+    ctx.font = o.font || `600 12px "IBM Plex Mono", monospace`; ctx.fillStyle = o.color || C.muted;
+    ctx.textAlign = o.align || 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, x, y);
+  }
+  function meter(x, y, w, frac, hot) {
+    rr(x, y, w, 5, 3); ctx.fillStyle = C.line; ctx.fill();
+    const f = Math.max(0, Math.min(1, frac));
+    rr(x, y, Math.max(2, w * f), 5, 3); ctx.fillStyle = hot || (f > .9 ? C.hot : f > .6 ? C.flush : C.ok); ctx.fill();
+  }
+  function glow(x, y, w, h) {
+    if (!S.hl.length) return;
+    ctx.save(); ctx.setLineDash([7, 5]); ctx.lineDashOffset = -S.t * 30; ctx.lineWidth = 2.5; ctx.strokeStyle = C.accent;
+    rr(x - 7, y - 7, w + 14, h + 14, 12); ctx.stroke(); ctx.restore();
+  }
+  const hl = id => S.hl.includes(id);
+  function arrow(x1, y1, x2, y2, dashed, color) {
+    ctx.save(); ctx.strokeStyle = color || C.line; ctx.lineWidth = 1.5; if (dashed) ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]);
+    const a = Math.atan2(y2 - y1, x2 - x1); ctx.fillStyle = color || C.line; ctx.beginPath();
+    ctx.moveTo(x2, y2); ctx.lineTo(x2 - 9 * Math.cos(a - .4), y2 - 9 * Math.sin(a - .4)); ctx.lineTo(x2 - 9 * Math.cos(a + .4), y2 - 9 * Math.sin(a + .4)); ctx.fill(); ctx.restore();
+  }
+
+  // ---------- geometry ----------
+  const USERS = { x: 20, y: 70, w: 120, h: 420 };
+  const API = [0, 1, 2, 3].map(i => ({ x: 190, y: 90 + i * 100, w: 110, h: 64 }));
+  // mode 1
+  const ROW = { x: 820, y: 220, w: 210, h: 110 };
+  const QLINE = { x1: 380, x2: ROW.x - 14, y: ROW.y + ROW.h / 2 };
+  const VIEW1 = { x: 1080, y: 230, w: 100, h: 90 };
+  // mode 2
+  const REC = Array.from({ length: N_REC }, (_, i) => ({ x: 380 + (i % 4) * 92, y: 58 + Math.floor(i / 4) * 86, w: 82, h: 70 }));
+  const LOG = { x: 380, y: 300, w: 360, h: 150 };
+  const AGG = { x: 780, y: 315, w: 130, h: 120 };
+  const CNT = { x: 950, y: 60, w: 150, h: 200 };
+  const CACHE = { x: 950, y: 330, w: 150, h: 90 };
+  const VIEW2 = { x: 1120, y: 330, w: 70, h: 90 };
+  const laneY = i => LOG.y + 34 + i * 28;
+
+  // ---------- particles ----------
+  function spawn() {
+    const a = API[(Math.random() * 4) | 0];
+    const sx = rand(USERS.x + 18, USERS.x + USERS.w - 18), sy = rand(USERS.y + 30, USERS.y + USERS.h - 14);
+    const ax = a.x + a.w / 2, ay = a.y + a.h / 2;
+    if (S.mode === 1) {
+      const qLenVis = Math.min(1, S.m1.Q / (ROW_CAP * TIMEOUT));
+      const tailX = QLINE.x2 - qLenVis * (QLINE.x2 - QLINE.x1);
+      const fail = Math.random() < S.m1.failRate;
+      parts.push({ pts: [[sx, sy], [ax, ay], [Math.max(QLINE.x1, tailX - 6), QLINE.y + rand(-14, 14)]], seg: 0, p: 0, speed: 520, color: C.accent, r: 3.2, fail });
+    } else {
+      const s = (Math.random() * N_REC) | 0, b = REC[s];
+      parts.push({ pts: [[sx, sy], [ax, ay], [b.x + b.w / 2 + rand(-20, 20), b.y + b.h / 2 + rand(-12, 12)]], seg: 0, p: 0, speed: 520, color: C.accent, r: 3.2,
+                   onApi: true, lane: (Math.random() * 4) | 0, rec: s });
+    }
+  }
+  function stepParts(dt) {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const q = parts[i];
+      if (q.fall) { q.vy += 900 * dt; q.y += q.vy * dt; q.x += q.vx * dt; q.life -= dt; if (q.life <= 0) parts.splice(i, 1); continue; }
+      if (q.fade !== undefined) { q.fade -= dt * 3; if (q.fade <= 0) parts.splice(i, 1); continue; }
+      const [x1, y1] = q.pts[q.seg], [x2, y2] = q.pts[q.seg + 1];
+      const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+      q.p += (q.speed * dt) / len;
+      if (q.p >= 1) {
+        q.seg++; q.p = 0;
+        if (q.seg === 1 && q.onApi && S.mode === 2) {      // at the API: also publish an event to the log
+          parts.push({ pts: [q.pts[1], [LOG.x + 8, laneY(q.lane)], [LOG.x + LOG.w - 8, laneY(q.lane)], [AGG.x + 10, AGG.y + AGG.h / 2 + rand(-20, 20)]],
+                       seg: 0, p: 0, speed: 430, color: C.event, r: 2.6, square: true });
+        }
+        if (q.seg >= q.pts.length - 1) {
+          const [ex, ey] = q.pts[q.pts.length - 1];
+          if (q.fail) { parts[i] = { fall: true, x: ex, y: ey, vx: rand(-40, 40), vy: rand(-120, -40), life: 1.1, color: C.hot, r: 3.2 }; continue; }
+          if (q.flushTo !== undefined) S.m2.flashes[q.flushTo] = 1;
+          parts[i] = { fade: 1, x: ex, y: ey, color: q.color, r: q.r, square: q.square, big: q.big };
+          continue;
+        }
+      }
+      const [a1, b1] = q.pts[q.seg], [a2, b2] = q.pts[q.seg + 1];
+      q.x = lerp(a1, a2, q.p); q.y = lerp(b1, b2, q.p);
+    }
+  }
+  function drawParts(top) {
+    for (const q of parts) {
+      if (q.x === undefined || !!q.big !== top) continue;
+      ctx.globalAlpha = q.fade !== undefined ? Math.max(0, q.fade) : q.fall ? Math.max(0, q.life) : 1;
+      ctx.fillStyle = q.color;
+      if (q.big) { rr(q.x - 22, q.y - 11, 44, 22, 6); ctx.fill(); ctx.globalAlpha = 1; label(q.big, q.x, q.y, { color: '#fff', font: '600 11px "IBM Plex Mono", monospace' }); }
+      else if (q.square) ctx.fillRect(q.x - q.r, q.y - q.r, q.r * 2, q.r * 2);
+      else { ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, 7); ctx.fill(); }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---------- simulation tick ----------
+  let spawnAcc = 0;
+  function tick(dt) {
+    S.t += dt;
+    S.Rcur += (S.R - S.Rcur) * Math.min(1, dt * 1.6);
+    const arr = S.Rcur * dt;
+    S.attempted += arr;
+    if (S.mode === 1) {
+      const m = S.m1;
+      m.Q += arr;
+      const served = Math.min(m.Q, ROW_CAP * dt);
+      m.Q -= served; m.db += served;
+      let failed = 0;
+      const maxQ = ROW_CAP * TIMEOUT;
+      if (m.Q > maxQ) { failed = m.Q - maxQ; m.Q = maxQ; m.failed += failed; }
+      const a = Math.min(1, dt * 2);
+      m.failRate += ((arr > 0 ? failed / arr : 0) - m.failRate) * a;
+      m.servedRate += (served / dt - m.servedRate) * a;
+      S.trueCount = m.db;
+    } else {
+      const m = S.m2;
+      S.trueCount += arr;
+      for (let i = 0; i < N_REC; i++) m.recLoad[i] += ((S.Rcur / N_REC) * rand(.85, 1.15) - m.recLoad[i]) * Math.min(1, dt * 3);
+      m.agg += arr; m.aggT += dt;
+      if (m.aggT >= S.win) {
+        m.aggT = 0; m.last = m.agg;
+        const each = m.agg / N_AGG;
+        for (let w = 0; w < N_AGG; w++) {
+          const k = (Math.random() * S.K) | 0;
+          m.shards[k] += each;
+          const cell = cntCell(k);
+          parts.push({ pts: [[AGG.x + AGG.w, AGG.y + 20 + w * 26], [cell.x + cell.w / 2, cell.y + cell.h / 2]], seg: 0, p: 0, speed: 340,
+                       color: C.flush, r: 5, big: '+' + short(each), flushTo: k });
+        }
+        m.agg = 0;
+      }
+      m.cacheT += dt;
+      if (m.cacheT >= CACHE_EVERY) { m.cacheT = 0; m.cache = m.shards.reduce((a, b) => a + b, 0); m.cachePulse = 1; }
+      m.cachePulse = Math.max(0, m.cachePulse - dt * 1.5);
+      for (let k = 0; k < S.K; k++) m.flashes[k] = Math.max(0, m.flashes[k] - dt * 2);
+    }
+    // visual sampling: more likes → more dots, but each dot stands for many likes
+    const vis = Math.max(5, Math.min(reduceMotion ? 12 : 48, 7 * Math.log2(S.Rcur / 40)));
+    spawnAcc += vis * dt;
+    while (spawnAcc >= 1) { spawnAcc--; if (S.Rcur > 1) spawn(); }
+    stepParts(dt);
+  }
+
+  function cntCell(k) {
+    const cols = S.K <= 4 ? S.K : S.K <= 16 ? 4 : 8, rows = Math.ceil(S.K / cols);
+    const gx = CNT.x + 10, gy = CNT.y + 40, gw = CNT.w - 20, gh = CNT.h - 74, gap = S.K > 16 ? 3 : 5;
+    const cw = (gw - gap * (cols - 1)) / cols, ch = Math.min(34, (gh - gap * (rows - 1)) / rows);
+    return { x: gx + (k % cols) * (cw + gap), y: gy + Math.floor(k / cols) * (ch + gap), w: cw, h: ch };
+  }
+
+  // ---------- drawing ----------
+  function drawUsers() {
+    rr(USERS.x, USERS.y, USERS.w, USERS.h, 10); ctx.fillStyle = C.panel; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 1.5; ctx.stroke();
+    label('VIEWERS', USERS.x + USERS.w / 2, USERS.y + 16, { font: '600 11px "IBM Plex Mono", monospace' });
+    const busy = Math.min(1, Math.log10(Math.max(S.Rcur, 10)) / 4.7);
+    for (let i = 0; i < 60; i++) {
+      const cx = USERS.x + 18 + (i % 6) * 17, cy = USERS.y + 42 + Math.floor(i / 6) * 37;
+      const on = ((Math.sin(S.t * 3 + i * 1.7) + 1) / 2) < busy * .8;
+      ctx.fillStyle = on ? C.accent : C.line;
+      ctx.beginPath(); ctx.arc(cx, cy, 5, 0, 7); ctx.fill();
+      rr(cx - 7, cy + 7, 14, 10, 4); ctx.fill();
+    }
+    label(fmt(S.Rcur) + ' likes/s', USERS.x + USERS.w / 2, USERS.y + USERS.h + 18, { color: C.ink, font: '600 13px "IBM Plex Mono", monospace' });
+  }
+  function drawApis() {
+    if (hl('api')) glow(API[0].x, API[0].y, API[0].w, API[3].y + API[3].h - API[0].y);
+    API.forEach((a, i) => box(a.x, a.y, a.w, a.h, 'Like API', 'server ' + (i + 1)));
+    label('auth · rate limit', API[0].x + API[0].w / 2, API[3].y + API[3].h + 18, { font: '400 11px "IBM Plex Mono", monospace' });
+  }
+
+  function drawMode1() {
+    const m = S.m1, util = S.Rcur / ROW_CAP, hot = util > 1;
+    // queue
+    const maxQ = ROW_CAP * TIMEOUT, qf = Math.min(1, m.Q / maxQ);
+    if (hl('queue')) glow(QLINE.x1, QLINE.y - 40, QLINE.x2 - QLINE.x1, 80);
+    ctx.save(); ctx.setLineDash([4, 6]); ctx.strokeStyle = C.line; ctx.beginPath(); ctx.moveTo(QLINE.x1, QLINE.y); ctx.lineTo(QLINE.x2, QLINE.y); ctx.stroke(); ctx.restore();
+    const nq = Math.round(qf * 70);
+    for (let i = 0; i < nq; i++) {
+      const x = QLINE.x2 - 6 - i * ((QLINE.x2 - QLINE.x1 - 10) / 70), y = QLINE.y + Math.sin(i * 2.3) * 12;
+      ctx.fillStyle = i > 55 ? C.hot : C.accent; ctx.globalAlpha = .85; ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    }
+    label(m.Q > 5 ? `waiting in line: ${fmt(m.Q)} likes · ${(m.Q / ROW_CAP).toFixed(1)} s wait` : 'no waiting', (QLINE.x1 + QLINE.x2) / 2, QLINE.y - 58,
+          { color: m.Q > 5 ? (qf > .9 ? C.hot : C.ink) : C.muted, font: '600 13px "IBM Plex Mono", monospace' });
+    label('each like must lock the row, one at a time', (QLINE.x1 + QLINE.x2) / 2, QLINE.y + 68, { font: '400 12px "IBM Plex Sans", sans-serif' });
+    arrow(API[0].x + API[0].w + 4, API[1].y + API[1].h, QLINE.x1 - 4, QLINE.y - 4);
+    arrow(API[3].x + API[3].w + 4, API[2].y + 10, QLINE.x1 - 4, QLINE.y + 4);
+
+    // the hot row
+    if (hl('row')) glow(ROW.x, ROW.y, ROW.w, ROW.h);
+    const pulse = hot ? (Math.sin(S.t * 10) + 1) / 2 : 0;
+    rr(ROW.x, ROW.y, ROW.w, ROW.h, 10);
+    ctx.fillStyle = C.panel; ctx.fill();
+    ctx.lineWidth = hot ? 3 : 1.5; ctx.strokeStyle = hot ? C.hot : C.line; ctx.globalAlpha = hot ? .55 + .45 * pulse : 1; ctx.stroke(); ctx.globalAlpha = 1;
+    label('videos table · 1 row', ROW.x + ROW.w / 2, ROW.y + 18, { font: '600 11px "IBM Plex Mono", monospace' });
+    label('video_id = abc', ROW.x + ROW.w / 2, ROW.y + 40, { color: C.ink, font: '400 12px "IBM Plex Mono", monospace' });
+    label('like_count = ' + fmt(m.db), ROW.x + ROW.w / 2, ROW.y + 62, { color: C.ink, font: '600 14px "IBM Plex Mono", monospace' });
+    label('🔒 ' + fmt(Math.min(S.Rcur, ROW_CAP)) + ' / ' + fmt(ROW_CAP) + ' updates/s', ROW.x + ROW.w / 2, ROW.y + 84, { font: '400 11px "IBM Plex Mono", monospace' });
+    meter(ROW.x + 16, ROW.y + ROW.h - 12, ROW.w - 32, util);
+    if (hot) {
+      rr(ROW.x + ROW.w / 2 - 44, ROW.y - 34, 88, 24, 12); ctx.fillStyle = C.hot; ctx.fill();
+      label('HOT KEY', ROW.x + ROW.w / 2, ROW.y - 22, { color: '#fff', font: '700 12px "IBM Plex Mono", monospace' });
+    }
+    // timeouts
+    if (m.failRate > .01) label(`${Math.round(m.failRate * 100)}% of likes time out and fail`, ROW.x + ROW.w / 2, ROW.y + ROW.h + 26, { color: C.hot, font: '600 13px "IBM Plex Sans", sans-serif' });
+    // viewers read the same row
+    box(VIEW1.x, VIEW1.y, VIEW1.w, VIEW1.h, 'Viewers', short(m.db));
+    arrow(VIEW1.x - 4, VIEW1.y + VIEW1.h / 2, ROW.x + ROW.w + 6, ROW.y + ROW.h / 2, true);
+    label('reads hit the', VIEW1.x + VIEW1.w / 2, VIEW1.y + VIEW1.h + 16, { font: '400 11px "IBM Plex Sans", sans-serif' });
+    label('same row too', VIEW1.x + VIEW1.w / 2, VIEW1.y + VIEW1.h + 30, { font: '400 11px "IBM Plex Sans", sans-serif' });
+    label('UPDATE videos SET like_count = like_count + 1 WHERE video_id = \'abc\'', W / 2 + 120, H - 26, { color: C.muted, font: '400 12px "IBM Plex Mono", monospace' });
+  }
+
+  function drawMode2() {
+    const m = S.m2;
+    // like records
+    const recBox = { x: REC[0].x - 10, y: REC[0].y - 30, w: 4 * 92 + 10, h: 2 * 86 + 30 };
+    if (hl('rec')) glow(recBox.x, recBox.y, recBox.w, recBox.h);
+    label('LIKE RECORDS · sharded by user_id (source of truth)', recBox.x + recBox.w / 2, REC[0].y - 16, { font: '600 11px "IBM Plex Mono", monospace' });
+    REC.forEach((b, i) => {
+      box(b.x, b.y, b.w, b.h, 'shard ' + i, fmt(m.recLoad[i]) + '/s', { fs: 12 });
+      meter(b.x + 8, b.y + b.h - 11, b.w - 16, m.recLoad[i] / SHARD_CAP);
+    });
+    label('row = (user_id, video_id) → LIKED', recBox.x + recBox.w / 2, recBox.y + recBox.h + 22, { font: '400 11px "IBM Plex Mono", monospace' });
+
+    // log
+    if (hl('log')) glow(LOG.x, LOG.y, LOG.w, LOG.h);
+    rr(LOG.x, LOG.y, LOG.w, LOG.h, 10); ctx.fillStyle = C.panel; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 1.5; ctx.stroke();
+    label('EVENT LOG (Kafka) · 4 partitions', LOG.x + LOG.w / 2, LOG.y + 16, { font: '600 11px "IBM Plex Mono", monospace' });
+    for (let i = 0; i < 4; i++) { ctx.strokeStyle = C.line; ctx.beginPath(); ctx.moveTo(LOG.x + 10, laneY(i)); ctx.lineTo(LOG.x + LOG.w - 10, laneY(i)); ctx.stroke(); }
+
+    // aggregator
+    if (hl('agg')) glow(AGG.x, AGG.y, AGG.w, AGG.h);
+    rr(AGG.x, AGG.y, AGG.w, AGG.h, 10); ctx.fillStyle = C.panel; ctx.fill(); ctx.strokeStyle = C.flush; ctx.lineWidth = 1.5; ctx.stroke();
+    label('AGGREGATOR', AGG.x + AGG.w / 2, AGG.y + 16, { font: '600 11px "IBM Plex Mono", monospace' });
+    label('+' + fmt(m.agg), AGG.x + AGG.w / 2, AGG.y + 48, { color: C.ink, font: '600 18px "IBM Plex Mono", monospace' });
+    label('this window', AGG.x + AGG.w / 2, AGG.y + 68, { font: '400 11px "IBM Plex Sans", sans-serif' });
+    meter(AGG.x + 14, AGG.y + 84, AGG.w - 28, m.aggT / S.win, C.flush);
+    label(`flush every ${S.win.toFixed(1)} s`, AGG.x + AGG.w / 2, AGG.y + 104, { font: '400 11px "IBM Plex Mono", monospace' });
+    label('Flink / Spark Streaming', AGG.x + AGG.w / 2, AGG.y + AGG.h + 14, { font: '400 11px "IBM Plex Mono", monospace' });
+
+    // counter shards
+    if (hl('cnt')) glow(CNT.x, CNT.y, CNT.w, CNT.h);
+    rr(CNT.x, CNT.y, CNT.w, CNT.h, 10); ctx.fillStyle = C.panel; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 1.5; ctx.stroke();
+    label('COUNTER', CNT.x + CNT.w / 2, CNT.y + 14, { font: '600 11px "IBM Plex Mono", monospace' });
+    label(`${S.K} shard${S.K > 1 ? 's' : ''} · sum on read`, CNT.x + CNT.w / 2, CNT.y + 28, { font: '400 10px "IBM Plex Mono", monospace' });
+    for (let k = 0; k < S.K; k++) {
+      const c = cntCell(k); rr(c.x, c.y, c.w, c.h, 3);
+      ctx.fillStyle = m.flashes[k] > 0 ? C.flush : C.line; ctx.globalAlpha = m.flashes[k] > 0 ? .4 + .6 * m.flashes[k] : 1; ctx.fill(); ctx.globalAlpha = 1;
+    }
+    const perShard = N_AGG / S.win / S.K;
+    label(`${(N_AGG / S.win).toFixed(1)} writes/s total`, CNT.x + CNT.w / 2, CNT.y + CNT.h - 26, { color: C.ink, font: '600 11px "IBM Plex Mono", monospace' });
+    label(`${perShard < 1 ? perShard.toFixed(2) : perShard.toFixed(1)} /s per shard`, CNT.x + CNT.w / 2, CNT.y + CNT.h - 12, { font: '400 10px "IBM Plex Mono", monospace' });
+
+    // cache and viewers
+    if (hl('cache')) glow(CACHE.x, CACHE.y, VIEW2.x + VIEW2.w - CACHE.x, CACHE.h);
+    box(CACHE.x, CACHE.y, CACHE.w, CACHE.h, 'Cache', fmt(m.cache), { stroke: m.cachePulse > 0 ? C.event : C.line, lw: 1.5 + 2 * m.cachePulse });
+    label(`refresh every ${CACHE_EVERY} s`, CACHE.x + CACHE.w / 2, CACHE.y + CACHE.h + 14, { font: '400 11px "IBM Plex Mono", monospace' });
+    box(VIEW2.x, VIEW2.y, VIEW2.w, VIEW2.h, short(m.cache), 'shown', { fs: 16 });
+    arrow(CNT.x + CNT.w / 2, CNT.y + CNT.h + 4, CACHE.x + CACHE.w / 2, CACHE.y - 4, false, m.cachePulse > 0 ? C.event : null);
+    arrow(CACHE.x + CACHE.w + 2, CACHE.y + CACHE.h / 2, VIEW2.x - 4, VIEW2.y + VIEW2.h / 2);
+
+    // wires
+    arrow(API[0].x + API[0].w + 4, API[0].y + 20, REC[0].x - 14, REC[0].y + 30);
+    arrow(API[3].x + API[3].w + 4, API[3].y + 20, LOG.x - 4, LOG.y + 80);
+    arrow(LOG.x + LOG.w + 2, LOG.y + LOG.h / 2, AGG.x - 4, AGG.y + AGG.h / 2);
+    arrow(AGG.x + AGG.w / 2 + 30, AGG.y - 4, CNT.x + 20, CNT.y + CNT.h + 2, false, C.flush);
+    // nightly recount
+    ctx.save(); ctx.setLineDash([3, 5]); ctx.strokeStyle = C.muted; ctx.lineWidth = 1.2; ctx.beginPath();
+    ctx.moveTo(recBox.x + recBox.w, REC[0].y + 10); ctx.lineTo(CNT.x - 6, REC[0].y + 10); ctx.stroke(); ctx.restore();
+    label('nightly recount fixes drift', (recBox.x + recBox.w + CNT.x) / 2, REC[0].y - 4, { font: '400 10px "IBM Plex Mono", monospace' });
+
+    label(`true count ${fmt(S.trueCount)}   ·   shown ${fmt(m.cache)}   ·   lag ${fmt(Math.max(0, S.trueCount - m.cache))} likes`,
+          W / 2 + 60, H - 26, { color: C.muted, font: '400 12px "IBM Plex Mono", monospace' });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = C.stage; ctx.fillRect(0, 0, W, H);
+    drawParts(false);
+    drawUsers(); drawApis();
+    if (S.mode === 1) drawMode1(); else drawMode2();
+    drawParts(true);
+  }
+
+  // ---------- DOM: controls, stats, caption ----------
+  const $ = id => document.getElementById(id);
+  const rate = $('rate'), win = $('win'), shards = $('shards');
+  function setRate(r) { S.R = r; rate.value = sliderFromRate(r); $('rateOut').textContent = fmt(r); }
+  function setMode(m) {
+    S.mode = m; $('m1').setAttribute('aria-pressed', m === 1); $('m2').setAttribute('aria-pressed', m === 2);
+    $('wCtl').hidden = $('kCtl').hidden = m === 1; reset();
+  }
+  function setWin(w) { S.win = w; win.value = Math.round(w * 2); $('winOut').textContent = w.toFixed(1) + ' s'; }
+  function setK(k) { S.K = k; shards.value = SHARD_STEPS.indexOf(k); $('shardsOut').textContent = k; if (S.mode === 2) { const total = S.m2.shards.reduce((a, b) => a + b, 0); const per = total / k; S.m2.shards = Array(k).fill(per); S.m2.flashes = Array(k).fill(0); } }
+  rate.addEventListener('input', () => { stopTour(); setRate(rateFromSlider(+rate.value)); });
+  win.addEventListener('input', () => { stopTour(); setWin(+win.value / 2); });
+  shards.addEventListener('input', () => { stopTour(); setK(SHARD_STEPS[+shards.value]); });
+  $('m1').addEventListener('click', () => { stopTour(); setMode(1); });
+  $('m2').addEventListener('click', () => { stopTour(); setMode(2); });
+  $('pause').addEventListener('click', () => { S.paused = !S.paused; $('pause').textContent = S.paused ? 'Resume' : 'Pause'; });
+
+  function liveCaption() {
+    if (S.mode === 1) {
+      const r = S.Rcur;
+      if (r <= ROW_CAP * .9) return `<b>${fmt(r)} likes/s.</b> Every like runs <code>UPDATE … like_count + 1</code> on the same row. The row takes about ${fmt(ROW_CAP)} updates a second, so it keeps up. Drag the slider past 1,000.`;
+      return `<b>${fmt(r)} likes/s into a row that can take ${fmt(ROW_CAP)}.</b> All of them need the same row lock, so they queue up. After ${TIMEOUT} seconds of waiting they time out: <b>${Math.round(S.m1.failRate * 100)}% of likes are failing.</b> This row is a hot key.`;
+    }
+    return `<b>${fmt(S.Rcur)} likes/s</b> spread over ${N_REC} like-record shards (≈${fmt(S.Rcur / N_REC)}/s each). The counter gets only <b>${(N_AGG / S.win).toFixed(1)} writes/s</b> because the aggregator sends one +N per worker every ${S.win.toFixed(1)} s, spread over ${S.K} shard${S.K > 1 ? 's' : ''}.`;
+  }
+  function renderStats() {
+    const cell = (k, v, s, cls = '') => `<div class="stat"><span class="k">${k}</span><span class="v ${cls}">${v}</span><span class="s">${s}</span></div>`;
+    let h = cell('Likes arriving', fmt(S.Rcur) + '/s', 'from all viewers');
+    if (S.mode === 1) {
+      const m = S.m1;
+      h += cell('Writes to the hot row', fmt(Math.min(S.Rcur, ROW_CAP)) + '/s', `max ${fmt(ROW_CAP)}/s (row lock)`, S.Rcur > ROW_CAP ? 'bad' : '');
+      h += cell('Wait in line', (m.Q / ROW_CAP).toFixed(2) + ' s', `times out after ${TIMEOUT} s`, m.Q / ROW_CAP > 1 ? 'bad' : '');
+      h += cell('Likes lost', fmt(m.failed), `${Math.round(m.failRate * 100)}% failing right now`, m.failed > 0 ? 'bad' : 'good');
+      h += cell('Count viewers see', fmt(m.db), 'read straight from the hot row');
+    } else {
+      const m = S.m2, maxRec = Math.max(...m.recLoad);
+      h += cell('Busiest like-record shard', fmt(maxRec) + '/s', `of ${fmt(SHARD_CAP)}/s capacity`, maxRec > SHARD_CAP ? 'bad' : 'good');
+      h += cell('Writes to the counter', (N_AGG / S.win).toFixed(1) + '/s', `instead of ${fmt(S.Rcur)}/s`, 'good');
+      h += cell('Likes lost', '0', 'every like is stored', 'good');
+      h += cell('Count viewers see', short(m.cache), `${fmt(m.cache)} · true ${fmt(S.trueCount)}`);
+    }
+    $('stats').innerHTML = h;
+    if (!tour.on && !tour.done) { $('capStep').textContent = 'LIVE'; $('cap').innerHTML = liveCaption(); }
+  }
+
+  // ---------- guided tour ----------
+  const STEPS = [
+    { t: 0,  mode: 1, R: 200,   hl: ['row'], cap: '<b>One viral video, one counter row.</b> The simple design stores the count in one row and runs <code>like_count = like_count + 1</code> for every like. At 200 likes a second this works fine.' },
+    { t: 9,  R: 10000, hl: ['row'], cap: '<b>The video goes viral: 10,000 likes a second.</b> Every update must lock that same row, and one row handles about 1,000 locked updates a second. All the traffic lands on one key: this is a <b>hot key</b>.' },
+    { t: 19, hl: ['queue'], cap: 'Likes <b>wait in line</b> for the lock. After 2 seconds they time out. <b>About 9 in 10 likes are failing</b>, and viewers reading the count are stuck behind the same lock. Adding more API servers doesn\'t help: the bottleneck is one row.' },
+    { t: 29, mode: 2, R: 10000, win: 1, K: 16, hl: ['rec'], cap: '<b>Fix 1: store each like as its own record.</b> The key is <code>(user_id, video_id)</code> and the table is sharded by <code>user_id</code>. 10,000 different people spread evenly over 8 machines, about 1,250 writes a second each. <b>No hot key.</b> This record is exact and powers your blue 👍 button.' },
+    { t: 41, hl: ['log', 'agg'], cap: '<b>Fix 2: publish an event, then add up in batches.</b> The API also writes "LIKED" to an event log. A stream job keeps a running <b>+N</b> in memory and, once a second, sends one write per worker. 10,000 likes become <b>4 writes</b>.' },
+    { t: 53, hl: ['cnt'], cap: '<b>Fix 3: split the counter into shards.</b> Each +N goes to a random sub-counter; reading the total adds them up. Even the busiest videos never hammer one row: <b>0.25 writes a second per shard</b>.' },
+    { t: 63, hl: ['cache'], cap: '<b>Viewers read from a cache</b>, refreshed every 2 seconds, and see the count rounded, like <b>1.2M</b>. It lags the true count by a second or two, which nobody can notice. A nightly recount from the like records fixes any drift.' },
+    { t: 73, R: 50000, hl: ['rec', 'cnt'], cap: '<b>Now 50,000 likes a second.</b> Each like-record shard is at about 6,250 of its 10,000 capacity, and the counter still gets only 4 writes a second. <b>Nothing is lost.</b> To grow further, add shards.' },
+    { t: 85, end: true },
+  ];
+  const tour = { on: false, t: 0, i: -1, done: false };
+  function startTour() { tour.done = false; tour.on = true; tour.t = 0; tour.i = -1; S.paused = false; $('pause').textContent = 'Pause'; $('tour').textContent = 'Stop tour'; }
+  function stopTour() { tour.done = false; if (!tour.on) return; tour.on = false; S.hl = []; $('tour').textContent = 'Play guided tour'; }
+  $('tour').addEventListener('click', () => tour.on ? stopTour() : startTour());
+  function tourTick(dt) {
+    if (!tour.on) return;
+    tour.t += dt;
+    while (tour.i + 1 < STEPS.length && tour.t >= STEPS[tour.i + 1].t) {
+      const s = STEPS[++tour.i];
+      if (s.end) { stopTour(); tour.done = true; $('capStep').textContent = 'DONE'; $('cap').innerHTML = 'Tour finished. Drag the sliders or switch designs to explore on your own.'; return; }
+      if (s.mode && s.mode !== S.mode) setMode(s.mode);
+      if (s.win) setWin(s.win);
+      if (s.K) setK(s.K);
+      if (s.R) setRate(s.R);
+      S.hl = s.hl || [];
+      $('capStep').textContent = `STEP ${tour.i + 1} / ${STEPS.length - 1}`;
+      $('cap').innerHTML = s.cap;
+    }
+  }
+
+  // ---------- canvas resolution ----------
+  function fit() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  fit(); addEventListener('resize', fit);
+
+  // ---------- loop ----------
+  setRate(200); setWin(1); setK(16); setMode(1);
+  let last = performance.now(), statT = 0;
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (!S.paused) { tourTick(dt); tick(dt); }
+    draw();
+    statT += dt; if (statT > .2) { statT = 0; renderStats(); }
+    requestAnimationFrame(frame);
+  }
+  renderStats();
+  requestAnimationFrame(frame);
+  if (location.hash === '#autoplay') startTour();
+})();
+</script>
+
+</body>
+</html>
