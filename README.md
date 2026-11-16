@@ -19,8 +19,8 @@ download `index.html` and open it in a browser, then drag *Likes per second* fro
 
 | Note | Topic |
 |---|---|
-| [AWS services](AWS%20services.gif) | An animated map of core AWS services and what each one is for |
-| [Delta tables](Delta%20Tables.png) | How Delta Lake tables add transactions, versioning and time travel on top of Parquet files |
+| [9 AWS services every data engineer should know](AWS%20services.gif) | S3, Glue, Athena, Redshift, EMR, Kinesis, Lambda, RDS and QuickSight: what each is for (infographic by Arunkumar Palanisamy) |
+| [Delta tables in 90 seconds](Delta%20Tables.png) | Parquet files + a transaction log: inserts, updates, deletes, checkpoints, time travel, OPTIMIZE and VACUUM |
 
 ## Related projects
 
